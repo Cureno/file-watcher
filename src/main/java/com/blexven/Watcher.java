@@ -8,44 +8,14 @@ import java.util.Properties;
 
 class Watcher {
 
-    private static String cwd = System.getProperty("user.dir");
-    private static Properties filesAndCommands = loadConfigurationFrom(cwd + "/" + "watcher.properties");
+    private String cwd = System.getProperty("user.dir");
+    private WatchService watchService;
+    private Properties filesAndCommands = loadConfigurationFrom(cwd + "/" + "watcher.properties");
 
     public static void main(String[] args) throws IOException, InterruptedException {
 
-        WatchService watchService = FileSystems.getDefault().newWatchService();
+        new Watcher().watchJarDirectoryAndRunRegisteredCommands();
 
-        FileSystems.getDefault().getPath(cwd)
-                   .register(watchService, StandardWatchEventKinds.ENTRY_MODIFY);
-
-        WatchKey key;
-
-        while ((key = watchService.take()) != null) {
-
-            long previousModification = 0;
-
-            for (WatchEvent<?> event : key.pollEvents()) {
-
-                Path filePath = ((Path) event.context());
-                String fileName = filePath.toString();
-
-                long thisModification = filePath.toFile().lastModified();
-                boolean notTheSameModificationReportedMultipleTimes = !(thisModification - previousModification < 50);
-
-                if (notTheSameModificationReportedMultipleTimes &&
-                    filesAndCommands.containsKey(fileName)) {
-
-                    runRegisteredCommand(fileName);
-
-                }
-
-                previousModification = thisModification;
-
-            }
-
-            key.reset();
-
-        }
     }
 
     private static Properties loadConfigurationFrom(String propertiesFile) {
@@ -65,8 +35,11 @@ class Watcher {
         return properties;
     }
 
+    public Properties getFilesAndCommands() {
+        return filesAndCommands;
+    }
 
-    private static void runRegisteredCommand(String fileName) {
+    private void runRegisteredCommand(String fileName) {
         System.out.println("Should run the command: " + filesAndCommands.getProperty(fileName));
 
         String[] command = filesAndCommands.getProperty(fileName)
@@ -82,4 +55,51 @@ class Watcher {
         }
     }
 
+    public void watchJarDirectoryAndRunRegisteredCommands() throws IOException, InterruptedException {
+        watchService = FileSystems.getDefault().newWatchService();
+
+        FileSystems.getDefault().getPath(cwd)
+                   .register(watchService, StandardWatchEventKinds.ENTRY_MODIFY);
+
+        WatchKey key;
+
+        try {
+            while ((key = watchService.take()) != null) {
+
+                long previousModification = 0;
+
+                for (WatchEvent<?> event : key.pollEvents()) {
+
+                    Path filePath = ((Path) event.context());
+                    String fileName = filePath.toString();
+
+                    long thisModification = filePath.toFile().lastModified();
+                    boolean notTheSameModificationReportedMultipleTimes = !(thisModification - previousModification < 50);
+
+                    if (notTheSameModificationReportedMultipleTimes &&
+                        filesAndCommands.containsKey(fileName)) {
+
+                        runRegisteredCommand(fileName);
+
+                    }
+
+                    previousModification = thisModification;
+
+                }
+
+                key.reset();
+
+            }
+        } catch (ClosedWatchServiceException e) {
+            System.out.println("Closing done.");
+        }
+    }
+
+    public void stop () {
+        try {
+            watchService.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
 }
