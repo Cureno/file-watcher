@@ -1,41 +1,22 @@
 package com.blexven;
 
+import java.io.FileNotFoundException;
+import java.io.FileReader;
 import java.io.IOException;
 import java.nio.file.*;
-import java.util.Arrays;
-import java.util.HashSet;
+import java.util.Properties;
 
 class Watcher {
 
-    private static HashSet<String> fileNamesToWatch = new HashSet<>();
+    private static String cwd = System.getProperty("user.dir");
+    private static Properties filesAndCommands = loadConfigurationFrom(cwd + "/" + "watcher.properties");
 
     public static void main(String[] args) throws IOException, InterruptedException {
 
+        WatchService watchService = FileSystems.getDefault().newWatchService();
 
-        if (args.length > 0) {
-            System.out.println("Got some arguments ");
-
-            fileNamesToWatch.addAll(Arrays.asList(args));
-        }
-        else {
-            String fallbackFile = "hello.txt";
-            fileNamesToWatch.add(fallbackFile);
-
-            System.out.println("No files specified ");
-        }
-
-        fileNamesToWatch.forEach(filepath ->
-                                         System.out.print("\twatching: " + filepath + "\n")
-        );
-
-        FileSystem fileSystem = FileSystems.getDefault();
-        WatchService watchService = fileSystem.newWatchService();
-
-        Path currentWorkingDirectory = fileSystem.getPath(System.getProperty("user.dir"));
-        currentWorkingDirectory.register(watchService, StandardWatchEventKinds.ENTRY_MODIFY);
-        System.out.println("Watching directory: " + currentWorkingDirectory.getFileName().toAbsolutePath());
-        System.err.println();
-
+        FileSystems.getDefault().getPath(cwd)
+                   .register(watchService, StandardWatchEventKinds.ENTRY_MODIFY);
 
         WatchKey key;
 
@@ -46,23 +27,16 @@ class Watcher {
             for (WatchEvent<?> event : key.pollEvents()) {
 
                 Path filePath = ((Path) event.context());
+                String fileName = filePath.toString();
 
                 long thisModification = filePath.toFile().lastModified();
-                boolean notTheSameModifiactionReportedASecondTime = !(thisModification - previousModification < 50);
+                boolean notTheSameModificationReportedMultipleTimes = !(thisModification - previousModification < 50);
 
-                if (notTheSameModifiactionReportedASecondTime) {
+                if (notTheSameModificationReportedMultipleTimes &&
+                    filesAndCommands.containsKey(fileName)) {
 
-                    // we do the work
-                    if (fileNamesToWatch.contains(filePath.toString())) {
-                        System.out.println("We care about this: " + filePath);
+                    runRegisteredCommand(fileName);
 
-                        Path parent = filePath.toAbsolutePath().getParent();
-                        Path resolved = parent.resolve("dist/index.html");
-                        System.out.println("Resolved is: " + resolved);
-
-                        new Pandoc(filePath, resolved).run();
-
-                    }
                 }
 
                 previousModification = thisModification;
@@ -72,36 +46,39 @@ class Watcher {
             key.reset();
 
         }
-
     }
 
-    static class Pandoc {
+    private static Properties loadConfigurationFrom(String propertiesFile) {
+        Properties properties = new Properties();
+        try {
+            FileReader reader = new FileReader(propertiesFile);
+            properties.load(reader);
 
-        private final Path outputFile;
-        private final Path sourceFile;
-
-        Pandoc(Path sourceFile, Path outputFile) {
-            this.sourceFile = sourceFile;
-            this.outputFile = outputFile;
-            if (Files.notExists(outputFile.getParent())) {
-                try {
-                    Files.createDirectories(outputFile.getParent());
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
+        } catch (FileNotFoundException e) {
+            System.err.println("File not found : " + propertiesFile);
+            e.printStackTrace();
+        } catch (IOException e) {
+            System.err.println("Error loading properties from: " + propertiesFile);
+            e.printStackTrace();
         }
 
-        void run() {
+        return properties;
+    }
 
-            ProcessBuilder pb = new ProcessBuilder("pandoc", "-s", sourceFile.toString(), "-o", outputFile.toString());
-            pb.inheritIO(); // needed because the program "pandoc --help" hangs without it
 
-            try {
-                pb.start();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+    private static void runRegisteredCommand(String fileName) {
+        System.out.println("Should run the command: " + filesAndCommands.getProperty(fileName));
+
+        String[] command = filesAndCommands.getProperty(fileName)
+                                           .split(" ");
+
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.inheritIO(); // needed because the program "pandoc --help" hangs without it
+
+        try {
+            pb.start();
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 

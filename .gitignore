@@ -107,4 +107,4 @@ fabric.properties
 /filewatcher.iml
 .idea/
 dist/
-hello.txt
+hello.md
